@@ -112,11 +112,17 @@ public class JWTVotesEndpoint implements AssignmentEndpoint {
               .signWith(io.jsonwebtoken.SignatureAlgorithm.HS512, JWT_PASSWORD)
               .compact();
       Cookie cookie = new Cookie("access_token", token);
+      cookie.setSecure(true);      // Ensures cookie is only sent over HTTPS
+      cookie.setHttpOnly(true);    // Prevents JavaScript access to the cookie
+      cookie.setPath("/");         // Ensure cookie path is set
       response.addCookie(cookie);
       response.setStatus(HttpStatus.OK.value());
       response.setContentType(MediaType.APPLICATION_JSON_VALUE);
     } else {
       Cookie cookie = new Cookie("access_token", "");
+      cookie.setSecure(true);      // Ensures cookie is only sent over HTTPS
+      cookie.setHttpOnly(true);    // Prevents JavaScript access to the cookie
+      cookie.setPath("/");         // Ensure cookie path is set
       response.addCookie(cookie);
       response.setStatus(HttpStatus.UNAUTHORIZED.value());
       response.setContentType(MediaType.APPLICATION_JSON_VALUE);
