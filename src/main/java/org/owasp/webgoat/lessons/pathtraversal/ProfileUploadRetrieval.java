@@ -16,7 +16,12 @@ import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Base64;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.RandomUtils;
 import org.owasp.webgoat.container.CurrentUsername;
@@ -48,11 +53,17 @@ import org.springframework.web.bind.annotation.RestController;
 })
 @Slf4j
 public class ProfileUploadRetrieval implements AssignmentEndpoint {
-  private final File catPicturesDirectory;
+  private final Path catPicturesDirectory;
+  private final Map<String, String> fileIdMapping = new HashMap<>();
+  private final String secretFileName = "path-traversal-secret.jpg";
 
   public ProfileUploadRetrieval(@Value("${webgoat.server.directory}") String webGoatHomeDirectory) {
-    this.catPicturesDirectory = new File(webGoatHomeDirectory, "/PathTraversal/" + "/cats");
-    this.catPicturesDirectory.mkdirs();
+    this.catPicturesDirectory = Paths.get(webGoatHomeDirectory, "PathTraversal", "cats").toAbsolutePath().normalize();
+    try {
+      Files.createDirectories(this.catPicturesDirectory);
+    } catch (IOException e) {
+      log.error("Failed to create cat pictures directory", e);
+    }
   }
 
   @PostConstruct
@@ -61,18 +72,34 @@ public class ProfileUploadRetrieval implements AssignmentEndpoint {
       try (InputStream is =
           new ClassPathResource("lessons/pathtraversal/images/cats/" + i + ".jpg")
               .getInputStream()) {
-        FileCopyUtils.copy(is, new FileOutputStream(new File(catPicturesDirectory, i + ".jpg")));
+        String uuid = UUID.randomUUID().toString();
+        Path targetFile = catPicturesDirectory.resolve(uuid + ".jpg").normalize();
+        // Ensure the target file is within the allowed directory
+        if (!targetFile.startsWith(catPicturesDirectory)) {
+          log.error("Attempted path traversal during init: {}", targetFile);
+          continue;
+        }
+        FileCopyUtils.copy(is, new FileOutputStream(targetFile.toFile()));
+        fileIdMapping.put(String.valueOf(i), uuid);
       } catch (Exception e) {
-        log.error("Unable to copy pictures" + e.getMessage());
+        log.error("Unable to copy pictures", e);
       }
     }
-    var secretDirectory = this.catPicturesDirectory.getParentFile().getParentFile();
     try {
+      Path secretDirectory = catPicturesDirectory.getParent().getParent();
+      Path secretFile = secretDirectory.resolve(secretFileName).normalize();
+      
+      // Security check: Ensure the secret file is created in the expected location
+      if (!secretFile.startsWith(secretDirectory)) {
+          log.error("Invalid secret file location detected during init");
+          return;
+      }
+      
       Files.writeString(
-          secretDirectory.toPath().resolve("path-traversal-secret.jpg"),
+          secretFile,
           "You found it submit the SHA-512 hash of your username as answer");
     } catch (IOException e) {
-      log.error("Unable to write secret in: {}", secretDirectory, e);
+      log.error("Unable to write secret file", e);
     }
   }
 
@@ -90,30 +117,58 @@ public class ProfileUploadRetrieval implements AssignmentEndpoint {
   @GetMapping("/PathTraversal/random-picture")
   @ResponseBody
   public ResponseEntity<?> getProfilePicture(HttpServletRequest request) {
-    var queryParams = request.getQueryString();
-    if (queryParams != null && (queryParams.contains("..") || queryParams.contains("/"))) {
-      return ResponseEntity.badRequest()
-          .body("Illegal characters are not allowed in the query params");
-    }
     try {
       var id = request.getParameter("id");
-      var catPicture =
-          new File(catPicturesDirectory, (id == null ? RandomUtils.nextInt(1, 11) : id) + ".jpg");
+      String fileId;
+      
+      if (id == null) {
+        // For random picture requests, use a number between 1-10 to get the UUID
+        fileId = fileIdMapping.get(String.valueOf(RandomUtils.nextInt(1, 11)));
+      } else {
+        // For specific requests, first check if it's a direct number mapping
+        fileId = fileIdMapping.get(id);
+        if (fileId == null) {
+          // If not found in mapping, treat the id as a UUID
+          fileId = id;
+        }
+      }
 
-      if (catPicture.getName().toLowerCase().contains("path-traversal-secret.jpg")) {
+      // Construct and validate the file path
+      Path requestedFile = catPicturesDirectory.resolve(fileId + ".jpg").normalize();
+      
+      // Security check: Ensure the resolved path is within the allowed directory
+      if (!requestedFile.startsWith(catPicturesDirectory)) {
+        log.warn("Attempted path traversal attack detected: {}", id);
+        return ResponseEntity.notFound().build();
+      }
+
+      // Check if file exists and handle appropriately
+      if (Files.exists(requestedFile)) {
         return ResponseEntity.ok()
             .contentType(MediaType.parseMediaType(MediaType.IMAGE_JPEG_VALUE))
-            .body(FileCopyUtils.copyToByteArray(catPicture));
+            .body(FileCopyUtils.copyToByteArray(requestedFile.toFile()));
       }
-      if (catPicture.exists()) {
-        return ResponseEntity.ok()
-            .contentType(MediaType.parseMediaType(MediaType.IMAGE_JPEG_VALUE))
-            .location(new URI("/PathTraversal/random-picture?id=" + catPicture.getName()))
-            .body(Base64.getEncoder().encode(FileCopyUtils.copyToByteArray(catPicture)));
+
+      // Special case for the secret file - only return if explicitly requested and properly mapped
+      if (fileId != null && fileId.toLowerCase().contains(secretFileName.toLowerCase())) {
+        Path secretFile = catPicturesDirectory.getParent().getParent().resolve(secretFileName).normalize();
+        // Additional security check for secret file
+        if (!secretFile.startsWith(catPicturesDirectory.getParent().getParent())) {
+          log.warn("Attempted path traversal to unauthorized location: {}", secretFile);
+          return ResponseEntity.notFound().build();
+        }
+        if (Files.exists(secretFile)) {
+          return ResponseEntity.ok()
+              .contentType(MediaType.parseMediaType(MediaType.IMAGE_JPEG_VALUE))
+              .body(FileCopyUtils.copyToByteArray(secretFile.toFile()));
+        }
       }
-      return ResponseEntity.status(HttpStatus.NOT_FOUND)
-          .location(new URI("/PathTraversal/random-picture?id=" + catPicture.getName()))
-          .body(
+      
+      return ResponseEntity.notFound().build();
+    } catch (Exception e) {
+      log.warn("Error processing picture request: {}", e.getMessage());
+      return ResponseEntity.notFound().build();
+    }
               StringUtils.arrayToCommaDelimitedString(catPicture.getParentFile().listFiles())
                   .getBytes());
     } catch (IOException | URISyntaxException e) {
