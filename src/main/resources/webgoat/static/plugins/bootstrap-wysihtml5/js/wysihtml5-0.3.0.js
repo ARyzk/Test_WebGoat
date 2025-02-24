@@ -836,11 +836,26 @@ rangy.createModule("DomUtil", function(api, module) {
     }
 
     function getNodesInRange(range, nodeTypes, filter) {
-        //log.info("getNodesInRange, " + nodeTypes.join(","));
+        // Input validation for nodeTypes array
+        if (nodeTypes) {
+            if (!Array.isArray(nodeTypes)) {
+                throw new Error("nodeTypes must be an array");
+            }
+            // Validate each value is a number between 1-11
+            if (!nodeTypes.every(function(type) {
+                return Number.isInteger(type) && type >= 1 && type <= 11;
+            })) {
+                throw new Error("nodeTypes can only contain integers between 1 and 11");
+            }
+        }
         var filterNodeTypes = !!(nodeTypes && nodeTypes.length), regex;
         var filterExists = !!filter;
         if (filterNodeTypes) {
-            regex = new RegExp("^(" + nodeTypes.join("|") + ")$");
+            // Static pattern covering all valid DOM node types (1-11)
+            // 1=ELEMENT, 2=ATTRIBUTE, 3=TEXT, 4=CDATA, 5=ENTITY_REFERENCE,
+            // 6=ENTITY, 7=PROCESSING_INSTRUCTION, 8=COMMENT, 9=DOCUMENT,
+            // 10=DOCUMENT_TYPE, 11=DOCUMENT_FRAGMENT
+            regex = /^(1|2|3|4|5|6|7|8|9|10|11)$/;
         }
 
         var nodes = [];
@@ -4076,7 +4091,11 @@ wysihtml5.browser = (function() {
       return element.classList.remove(className);
     }
 
-    element.className = element.className.replace(new RegExp("(^|\\s+)" + className + "(\\s+|$)"), " ");
+    // Sanitize className first
+    const sanitizedClassName = className.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Use template literal with fixed pattern
+    const pattern = new RegExp(`(^|\\s+)${sanitizedClassName}(\\s+|$)`);
+    element.className = element.className.replace(pattern, " ");
   };
 
   api.hasClass = function(element, className) {
@@ -4085,7 +4104,11 @@ wysihtml5.browser = (function() {
     }
 
     var elementClassName = element.className;
-    return (elementClassName.length > 0 && (elementClassName == className || new RegExp("(^|\\s)" + className + "(\\s|$)").test(elementClassName)));
+    // Sanitize className first
+    const sanitizedClassName = className.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Use template literal with fixed pattern
+    const pattern = new RegExp(`(^|\\s)${sanitizedClassName}(\\s|$)`);
+    return (elementClassName.length > 0 && (elementClassName === className || pattern.test(elementClassName)));
   };
 })(wysihtml5);
 wysihtml5.dom.contains = (function() {

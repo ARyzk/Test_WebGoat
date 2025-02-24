@@ -568,13 +568,40 @@ var oop = require("../../lib/oop");
 var Range = require("../../range").Range;
 var BaseFoldMode = require("./fold_mode").FoldMode;
 
+// Define a whitelist of allowed comment patterns
+const ALLOWED_COMMENT_PATTERNS = {
+    start: {
+        'java': '/\\*',
+        'javascript': '//',
+        'c': '/\\*',
+        'cpp': '/\\*',
+        'csharp': '/\\*',
+        'python': '#',
+        'ruby': '#',
+        'php': '/\\*'
+    },
+    end: {
+        'java': '\\*/',
+        'javascript': '$',
+        'c': '\\*/',
+        'cpp': '\\*/',
+        'csharp': '\\*/',
+        'python': '$',
+        'ruby': '$',
+        'php': '\\*/'
+    }
+};
+
 var FoldMode = exports.FoldMode = function(commentRegex) {
-    if (commentRegex) {
-        this.foldingStartMarker = new RegExp(
-            this.foldingStartMarker.source.replace(/\|[^|]*?$/, "|" + commentRegex.start)
-        );
+    if (commentRegex && commentRegex.type && ALLOWED_COMMENT_PATTERNS.start[commentRegex.type]) {
+        // Use predefined safe patterns from whitelist
+        const safeStartPattern = ALLOWED_COMMENT_PATTERNS.start[commentRegex.type];
+        const safeEndPattern = ALLOWED_COMMENT_PATTERNS.end[commentRegex.type];
+        
+        // Use pre-defined pattern to avoid ReDoS vulnerabilities
+        this.foldingStartMarker = FOLDING_PATTERNS.withComments;
         this.foldingStopMarker = new RegExp(
-            this.foldingStopMarker.source.replace(/\|[^|]*?$/, "|" + commentRegex.end)
+            this.foldingStopMarker.source.replace(/\|[^|]*?$/, "|" + safeEndPattern)
         );
     }
 };
@@ -582,7 +609,14 @@ oop.inherits(FoldMode, BaseFoldMode);
 
 (function() {
 
-    this.foldingStartMarker = /([\{\[\(])[^\}\]\)]*$|^\s*(\/\*)/;
+    // Define all possible patterns upfront to avoid dynamic pattern construction
+    const FOLDING_PATTERNS = {
+        default: /([\{\[\(])[^\}\]\)]*$|^\s*(\/\*)/,
+        withComments: /([\{\[\(])[^\}\]\)]*$|^\s*(\/\*)|(^\\s*\/\*)/
+    };
+    
+    // Use pre-defined pattern
+    this.foldingStartMarker = FOLDING_PATTERNS.default;
     this.foldingStopMarker = /^[^\[\{\(]*([\}\]\)])|^[\s\*]*(\*\/)/;
     this.singleLineBlockCommentRe= /^\s*(\/\*).*\*\/\s*$/;
     this.tripleStarBlockCommentRe = /^\s*(\/\*\*\*).*\*\/\s*$/;

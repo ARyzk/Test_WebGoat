@@ -90,36 +90,57 @@ public class ProfileUploadRetrieval implements AssignmentEndpoint {
   @GetMapping("/PathTraversal/random-picture")
   @ResponseBody
   public ResponseEntity<?> getProfilePicture(HttpServletRequest request) {
-    var queryParams = request.getQueryString();
-    if (queryParams != null && (queryParams.contains("..") || queryParams.contains("/"))) {
-      return ResponseEntity.badRequest()
-          .body("Illegal characters are not allowed in the query params");
-    }
     try {
       var id = request.getParameter("id");
-      var catPicture =
-          new File(catPicturesDirectory, (id == null ? RandomUtils.nextInt(1, 11) : id) + ".jpg");
-
-      if (catPicture.getName().toLowerCase().contains("path-traversal-secret.jpg")) {
-        return ResponseEntity.ok()
-            .contentType(MediaType.parseMediaType(MediaType.IMAGE_JPEG_VALUE))
-            .body(FileCopyUtils.copyToByteArray(catPicture));
+      if (id == null) {
+        id = String.valueOf(RandomUtils.nextInt(1, 11));
       }
+      
+      // Validate the id parameter (only allow alphanumeric and limited special chars)
+      if (!id.matches("^[a-zA-Z0-9-_]+$")) {
+        log.warn("Invalid characters in file name request: {}", id);
+        return ResponseEntity.badRequest().body("Invalid file name");
+      }
+      
+      // Add input length validation
+      if (id.length() > 50) {
+        log.warn("File name too long: {}", id);
+        return ResponseEntity.badRequest().body("Invalid file name");
+      }
+      
+      java.nio.file.Path basePath = catPicturesDirectory.toPath().normalize();
+      java.nio.file.Path requestedPath = basePath.resolve(id + ".jpg").normalize();
+      
+      // Verify the resolved path is within the allowed directory
+      if (!requestedPath.startsWith(basePath)) {
+        log.warn("Path traversal attempt detected: {}", requestedPath);
+        return ResponseEntity.badRequest().body("Invalid file path");
+      }
+      
+      File catPicture = requestedPath.toFile();
+      
+      // Verify file exists and check MIME type
       if (catPicture.exists()) {
+        String mimeType = Files.probeContentType(requestedPath);
+        if (mimeType == null || !mimeType.equals(MediaType.IMAGE_JPEG_VALUE)) {
+          log.warn("Invalid file type detected for file: {}", id);
+          return ResponseEntity.badRequest().body("Invalid file type");
+        }
+        
         return ResponseEntity.ok()
-            .contentType(MediaType.parseMediaType(MediaType.IMAGE_JPEG_VALUE))
-            .location(new URI("/PathTraversal/random-picture?id=" + catPicture.getName()))
+            .contentType(MediaType.IMAGE_JPEG)
+            .location(new URI("/PathTraversal/random-picture?id=" + id))
             .body(Base64.getEncoder().encode(FileCopyUtils.copyToByteArray(catPicture)));
       }
-      return ResponseEntity.status(HttpStatus.NOT_FOUND)
-          .location(new URI("/PathTraversal/random-picture?id=" + catPicture.getName()))
-          .body(
-              StringUtils.arrayToCommaDelimitedString(catPicture.getParentFile().listFiles())
-                  .getBytes());
+      
+      // Return generic 404 without revealing directory contents
+      return ResponseEntity.notFound().build();
+      
     } catch (IOException | URISyntaxException e) {
-      log.error("Image not found", e);
+      // Log the error but return generic message
+      log.error("Error processing file request for id: {}", request.getParameter("id"), e);
+      return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+          .body("An error occurred processing your request");
     }
-
-    return ResponseEntity.badRequest().build();
   }
 }
