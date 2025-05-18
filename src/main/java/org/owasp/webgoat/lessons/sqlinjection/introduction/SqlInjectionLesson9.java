@@ -4,6 +4,7 @@
  */
 package org.owasp.webgoat.lessons.sqlinjection.introduction;
 
+import java.sql.PreparedStatement;
 import static org.hsqldb.jdbc.JDBCResultSet.CONCUR_UPDATABLE;
 import static org.hsqldb.jdbc.JDBCResultSet.TYPE_SCROLL_SENSITIVE;
 import static org.owasp.webgoat.container.assignments.AttackResultBuilder.failed;
@@ -48,11 +49,7 @@ public class SqlInjectionLesson9 implements AssignmentEndpoint {
   protected AttackResult injectableQueryIntegrity(String name, String auth_tan) {
     StringBuilder output = new StringBuilder();
     String queryInjection =
-        "SELECT * FROM employees WHERE last_name = '"
-            + name
-            + "' AND auth_tan = '"
-            + auth_tan
-            + "'";
+        "SELECT * FROM employees WHERE last_name = ? AND auth_tan = ?";
     try (Connection connection = dataSource.getConnection()) {
       // V2019_09_26_7__employees.sql
       int oldMaxSalary = this.getMaxSalary(connection);
@@ -60,11 +57,14 @@ public class SqlInjectionLesson9 implements AssignmentEndpoint {
       // begin transaction
       connection.setAutoCommit(false);
       // do injectable query
-      Statement statement = connection.createStatement(TYPE_SCROLL_SENSITIVE, CONCUR_UPDATABLE);
+      PreparedStatement statement = connection.prepareStatement(queryInjection, TYPE_SCROLL_SENSITIVE, CONCUR_UPDATABLE);
       SqlInjectionLesson8.log(connection, queryInjection);
-      statement.execute(queryInjection);
-      // check new sum of salaries other employees and new salaries of John
+      statement.setString(1, name);
+      
+      statement.setString(2, auth_tan);
+      statement.execute();
       int newJohnSalary = this.getJohnSalary(connection);
+      
       int newSumSalariesOfOtherEmployees = this.getSumSalariesOfOtherEmployees(connection);
       if (newJohnSalary > oldMaxSalary
           && newSumSalariesOfOtherEmployees == oldSumSalariesOfOtherEmployees) {
@@ -75,7 +75,6 @@ public class SqlInjectionLesson9 implements AssignmentEndpoint {
             SqlInjectionLesson8.generateTable(this.getEmployeesDataOrderBySalaryDesc(connection)));
         return success(this).feedback("sql-injection.9.success").output(output.toString()).build();
       }
-      // failed roolback
       connection.rollback();
       return failed(this)
           .feedback("sql-injection.9.one")
